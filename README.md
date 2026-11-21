@@ -9,11 +9,26 @@ A fast drop-in for csv-reader 1.0.0, built for make.fun's
 it returns exactly the same `{columns, rows, errors}` for every input — same broken-row policy
 (BOM drop, stray CRs, quoted fields with doubled quotes and CRLF→LF, quote junk, unterminated
 quotes re-read as unquoted, short/long row padding and cutting, error order and line/row
-attribution) — but scans with `indexOf`/regex and slices whole field runs instead of building
-each field one character at a time.
+attribution) — but the parsing and JSON emission run in a WebAssembly SIMD module.
 
-- `solve.js` — dependency-free ES module exporting `run(input)`.
-- `main.ts` — the harness driver: reads `/input/cases.json`, answers each case with `run`, writes
+How it works:
+
+- The case text is copied into WASM linear memory as UTF-16LE; a SIMD parser
+  (`v128` `i16x8.eq` + bitmask + ctz over 64-byte blocks) scans for delimiters while scalar
+  code resolves every edge case exactly like the reference.
+- The speed path emits each case's answers JSON directly as UTF-8 bytes in linear memory —
+  byte-identical to `JSON.stringify` of the result — so the driver never builds per-field JS
+  strings or calls `JSON.stringify` on the answers. Safe-ASCII runs are narrowed
+  `i16x8 → i8x16` in bulk; everything else goes through an exact escaping path.
+- `run(input)` keeps the plain contract (field index + slicing) for correctness.
+
+Files:
+
+- `parser.ts` — AssemblyScript source of the WASM parser/emitter (compiled with
+  `asc --enable simd --runtime stub --initialMemory 512 --maximumMemory 8192 --optimize`).
+- `parser.wasm` — the compiled module.
+- `solve.js` — ES module exporting `run(input)` and `emitCaseJson(input)`.
+- `main.ts` — the harness driver: reads `/input/cases.json`, answers each case, writes
   `/output/answers.json` (V8 incremental marking off, as the house driver runs).
 
 Run it the way the harness does:
